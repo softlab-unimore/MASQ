@@ -21,6 +21,9 @@ Support for other models and neural network backends is on our roadmap.
 ![1_MASQ_pipeline](data/1_MASQ_pipeline.png)
 
 
+Frontend GUI available at [MASQ_frontend](https://github.com/FrancescoDelBuono/MASQ_frontend)
+
+
 ## Installation
 
 *MASQ* was tested on Python >= 3.5 on Linux, Windows and MacOS machines.  
@@ -51,11 +54,6 @@ $ python manage.py runserver
 ```
 
 The Application Runs on **localhost:8000** 
-
-## Demo Contributors
-
-* Francesco Del Buono
-* Matteo Paganelli
 
 ## License
 [MIT License](LICENSE)
