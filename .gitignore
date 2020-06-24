@@ -3,3 +3,4 @@
 /venv/
 /media/
 /data/result/
+*.pyc
