@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Index</title>
+</head>
+<body>
+<h1>ML 2 SQL</h1>
+<h2>Step: {{ request.session.step }}</h2>
+
+<div>
+    {% if request.session.step == 1 %}
+        <h2>Data Selection</h2>
+    {% elif request.session.step == 2 %}
+        <h2>Mode</h2>
+    {% elif request.session.step == 3 %}
+        <h2>Model</h2>
+    {% else %}
+        <h2>Running</h2>
+    {% endif %}
+</div>
+
+{% if error %}
+    <h2>An error occurred, check the code</h2>
+{% endif %}
+
+{% if request.session.step == 1 %}
+    {{ upload_error }}
+
+    <form method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+        <label for="upload">Select Dataset</label><br>
+        <input type="file" name="uploaded_file" id="upload"><br>
+        <label for="sep">Separator: </label>
+        <input type="text" name="sep" id="sep" value="," size=5><br>
+        <button type="submit">Upload</button>
+        <br>
+    </form>
+
+    <br>
+    {% if not tables %}
+        <form method="post">
+            {% csrf_token %}
+            <label for="db_connection">Database Connector: </label>
+            <input type="text" name="db_connection" id="db_connection"><br>
+            <button type="submit">Check</button>
+            <br>
+        </form>
+    {% else %}
+        <p>DB Connector:</p>
+        <form method="post">
+            {% csrf_token %}
+            {% for table in tables %}
+                <input type="radio" name="table" id="{{ forloop.counter }}" value="{{ table }}">
+                <label for="{{ forloop.counter }}">{{ table }}</label>
+                <br>
+            {% endfor %}
+            <br>
+            <input type="submit" value="Select">
+            <br>
+        </form>
+    {% endif %}
+
+{% endif %}
+
+{% if request.session.step > 1 %}
+    {% if request.session.dataset_name %}
+        <p>Dataset: {{ request.session.dataset_name }}</p>
+    {% else %}
+        <p>Impossible get dataset name. check source code</p>
+    {% endif %}
+{% endif %}
+
+{% if request.session.step == 2 %}
+    <p>Select modality</p>
+    <p><strong>{{ label_error }}</strong></p>
+
+    <form method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+        <input type="radio" name="mode" id="train" value="train">
+        <label for="train">Train</label><br>
+        <input type="radio" name="mode" id="test" value="test">
+        <label for="test">Test</label><br>
+        <br>
+
+        {% if request.session.is_db %}
+            <label for="label_table">1. Select table for label: </label><br>
+            <input type="text" name="label_table" id="label_table"><br>
+            <br>
+        {% endif %}
+
+        <label for="label_column">2. Select column for label: </label><br>
+        <input type="text" name="label_column" id="label_column"><br>
+        <br>
+
+        <label for="label_dataframe">3. Upload Label</label><br>
+        <input type="file" name="label_dataframe" id="label_dataframe"><br>
+        <br>
+
+        <input type="submit" value="Select">
+        <br>
+    </form>
+{% endif %}
+
+{% if request.session.step > 2 %}
+    {% if request.session.mode %}
+        <p>Mode: {{ request.session.mode }}</p>
+    {% else %}
+        <p>Impossible get mode. check source code</p>
+    {% endif %}
+{% endif %}
+
+{% if request.session.step == 3 %}
+    <p><strong>{{ transform_error }}</strong></p>
+
+    <form method="post">
+        {% csrf_token %}
+        <select name="transform_type">
+            <option value="onehot">one hot encoding</option>
+            <option value="norm">normalization</option>
+        </select>
+        <label for="transform_column"> on column </label>
+        <input type="text" name="transform_column" id="transform_column"><br>
+
+        <input type="submit" value="Add">
+    </form>
+
+    {% for transform in request.session.transforms %}
+        <p>{{ transform.transform_type }} {{ transform.transform_column }}</p>
+    {% endfor %}
+
+    <form method="post">
+        {% csrf_token %}
+        <input type="hidden" name="delete_transforms" value="delete_transforms">
+        <input type="submit" value="Delete transformations">
+    </form>
+
+    <br>
+    <br>
+    <p><strong>{{ model_error }}</strong></p>
+
+    <form method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+        <select name="model_type">
+            <option value="gradient_boosting">gradient_boosting</option>
+            <option value="decision_tree">decision tree</option>
+        </select>
+
+        <br>
+
+        {% if request.session.mode == 'test' %}
+            <label for="uploaded_model">Select model: </label>
+            <input type="file" name="uploaded_model" id="uploaded_model"><br>
+        {% endif %}
+
+
+        {% if request.session.mode == 'test' and request.session.is_db %}
+            <input type="checkbox" name="run_db" id="run_db">
+            <label for="run_db">Run on DB</label><br>
+        {% endif %}
+
+        <input type="submit" value="Run">
+    </form>
+{% endif %}
+
+<p><a href="{% url 'msp:restart' %}">Restart</a></p>
+<p><a href="{% url 'msp:index' %}">Reload</a></p>
+
+{% if request.session.step > 3 %}
+    {% if request.session.model_type %}
+        <p>Model: {{ request.session.model_type }}</p>
+    {% else %}
+        <p>Impossible get model_type. check source code</p>
+    {% endif %}
+
+    <p>Run on DB: {{ request.session.run_db }}</p>
+
+    {% if request.session.mode == 'test' %}
+        {% if request.session.model_file %}
+            <p>Pretrained model: {{ request.session.model_file }}</p>
+        {% else %}
+            <p>Impossible get model_file. check source code</p>
+        {% endif %}
+    {% endif %}
+
+    {% if request.session.transforms %}
+        <p>Transformations</p>
+    {% endif %}
+    {% for transform in request.session.transforms %}
+        <p>{{ transform.transform_type }} {{ transform.transform_column }}</p>
+    {% endfor %}
+
+{% endif %}
+
+</body>
+</html>
