@@ -1,11 +1,13 @@
-from sklearn.ensemble import GradientBoostingRegressor, GradientBoostingClassifier
+from sklearn.ensemble import GradientBoostingRegressor, GradientBoostingClassifier, RandomForestClassifier, RandomForestRegressor
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.linear_model import LogisticRegression, SGDRegressor
+from sklearn.neural_network import MLPClassifier, MLPRegressor
 # from lightning.regression import SDCARegressor
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.utils.validation import check_array
 from sklearn.tree._tree import DTYPE
+from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 
 from mlmodel.loader import load_model
 from mlmodel.gradient_boosting.gbm_sql import GBMSQL
@@ -14,6 +16,9 @@ from mlmodel.standard_normalization.std_scaler_sql import StandardScalerSQL
 from mlmodel.sgd_regressor.sgdr_sql import SGDModelSQL
 # from mlmodel.sdca_regressor.sdcar_sql import SDCARegressorSQL
 from mlmodel.one_hot_encoder.one_hot_encoder_sql import OneHotEncoderSQL
+from mlmodel.decision_tree.dtc_sql import DTMSQL
+from mlmodel.random_forest.rf_sql import RFMSQL
+from mlmodel.multi_layer_perceptron.mlp_sql import MLPSQL
 
 from sklearn.metrics import r2_score, accuracy_score, precision_score, recall_score
 
@@ -28,6 +33,13 @@ class MLManager(object):
         'LogisticRegression': LogisticRegression(random_state=24),
         'SGDRegressor': SGDRegressor(),
         # 'SDCARegressor': SDCARegressor(),
+        'DecisionTreeClassifier': DecisionTreeClassifier(max_leaf_nodes=20, min_samples_leaf=10, random_state=24),
+        'DecisionTreeRegressor': DecisionTreeRegressor(max_leaf_nodes=20, min_samples_leaf=10, random_state=24),
+        'RandomForestClassifier': RandomForestClassifier(max_leaf_nodes=20, n_estimators=100, min_samples_leaf=10, random_state=24),
+        'RandomForestRegressor': RandomForestRegressor(max_leaf_nodes=20, n_estimators=100, min_samples_leaf=10, random_state=24),
+        'MLPClassifier': MLPClassifier(hidden_layer_sizes=(5, 5, 5)),
+        'MLPRegressor': MLPRegressor(hidden_layer_sizes=(5, 5, 5)),
+
     }
 
     transform_types = {
@@ -41,6 +53,12 @@ class MLManager(object):
         'LogisticRegression': LogisticRegressionSQL(),
         'SGDRegressor': SGDModelSQL(),
         # 'SDCARegressor': SDCARegressorSQL(),
+        'DecisionTreeClassifier': DTMSQL(classification=True),
+        'DecisionTreeRegressor': DTMSQL(),
+        'RandomForestClassifier': RFMSQL(classification=True),
+        'RandomForestRegressor': RFMSQL(),
+        'MLPClassifier': MLPSQL(classification=True),
+        'MLPRegressor': MLPSQL(),
     }
 
     sql_transform_types = {
