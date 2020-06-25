@@ -424,14 +424,13 @@ class GBMSQL(object):
 
         return final_query
 
-    def query(self, gbm, features, table_name, class_labels=None):
+    def query(self, gbm, features, table_name):
         """
         This method generates the SQL query that implements the GBM inference.
 
         :param gbm: the fitted Sklearn Gradient Boosting model
         :param features: the list of features
         :param table_name: the name of the table or the subquery where to read the data
-        :param class_labels: the labels of the class attribute
         :return: the SQL query that implements the GBM inference
         """
 
@@ -450,15 +449,15 @@ class GBMSQL(object):
         if not isinstance(table_name, str):
             raise TypeError("Wrong data type for parameter table_name. Only string data type is allowed.")
 
-        if class_labels is not None:
-            if not isinstance(class_labels, Iterable):
-                raise TypeError("Wrong data type for parameter class_labels. Only iterable data type is allowed.")
-
         try:
             a = gbm.init_score
         except AttributeError:
             raise AttributeError("No init_score attribute provided in the fitted GBM object.")
         self.init_score = gbm.init_score
+
+        if self.classification:
+            if gbm.n_classes_ > 2:
+                raise Exception("Only binary classification is supported for the moment!")
 
         # extract the parameters (i.e., the decision rules) from the fitted GBM
         trees_parameters = GBMSQL.get_params(gbm, features)
