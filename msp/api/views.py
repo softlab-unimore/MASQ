@@ -541,6 +541,7 @@ def create_test_scenario(data):
     # Model params
     scenario.pipeline = get_document_object(data.get('pipeline'))
     scenario.run_db = data.get('run_db')
+    scenario.optimizer = data.get('optimizer')
 
     return scenario
 
@@ -575,8 +576,9 @@ def check_test_consistency(scenario):
 class ScenarioTestDetail(APIView):
 
     def post(self, request):
-        t_start = datetime.now()
+
         scenario = create_test_scenario(request.data)
+        inference_time = 0
 
         try:
             check_test_consistency(scenario)
@@ -587,12 +589,21 @@ class ScenarioTestDetail(APIView):
 
         # Dataset
         if scenario.run_db:
+
             # Get features from table
             features = get_columns(scenario.db_url, scenario.table)
+
         else:
+
+            data_extractor_start = datetime.now()
+
             # Get Dataset
             ds = get_dataset(scenario)
             features = ds.columns.to_list()
+
+            data_extractor_end = datetime.now()
+            data_extractor_time = (data_extractor_end - data_extractor_start).total_seconds()
+            inference_time += data_extractor_time
 
         if scenario.labels_type == 'column':
             # Remove Label column if exists
@@ -604,20 +615,29 @@ class ScenarioTestDetail(APIView):
         # Testing Phase
         query = None
         if scenario.run_db:
+
+            inference_start = datetime.now()
+
             # Generate query using MLManager
-            query = manager.generate_query(scenario.pipeline.file, scenario.table, features)
+            query = manager.generate_query(scenario.pipeline.file, scenario.table, features, scenario.optimizer)
 
             # Execute query
             y_pred = execute_query(scenario.db_url, query)
             y_pred = pd.Series(y_pred.iloc[:, 0], name='Label')
 
+            inference_end = datetime.now()
+            inference_time += (inference_end - inference_start).total_seconds()
+
         else:
+
+            inference_start = datetime.now()
+
             # Execute predict using MLManager and ML Library
             y_pred = manager.predict(ds[features], scenario.pipeline.file)
             y_pred = pd.Series(y_pred, name='Label')
 
-        # Finish testing
-        t_end = datetime.now()
+            inference_end = datetime.now()
+            inference_time += (inference_end - inference_start).total_seconds()
 
         # Label
         labels = []
@@ -683,7 +703,7 @@ class ScenarioTestDetail(APIView):
         # Save ResultScenario
         result_scenario = ResultScenario()
         result_scenario.scenario = scenario
-        result_scenario.execution_time = (t_end - t_start).total_seconds()
+        result_scenario.execution_time = inference_time
         result_scenario.throughput = result_scenario.execution_time / len(y_pred)
         result_scenario.score = res_evaluation
         result_scenario.file_result = document.filename

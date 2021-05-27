@@ -36,6 +36,7 @@ class Scenario(models.Model):
     # pipeline = models.FileField(blank=True, upload_to='model/')
     pipeline = models.ForeignKey('Document', on_delete=models.SET_NULL, null=True, blank=True, related_name='pipeline')
     run_db = models.BooleanField(default=False)
+    optimizer = models.BooleanField(default=False)
 
     @property
     def tables(self):
