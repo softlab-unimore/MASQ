@@ -1,27 +1,30 @@
-from lightning.regression import SDCARegressor
+from sklearn.linear_model import LinearRegression
 from collections import Iterable
 
 
-class SDCARegressorSQL(object):
+class LINRModelSQL(object):
     """
-    This class implements the SQL wrapper for the Lightning's SDCARegressor.
+    This class implements the SQL wrapper for a Sklearn's LinearRegression object.
     """
 
     def reset_optimization(self):
         pass
 
     @staticmethod
-    def get_params(sdca_model):
+    def get_params(linr_model):
         """
-        This method extracts from the SDCARegressor the fitted parameters (i.e., weights and intercept)
-        :return: Python dictionary containing the fitted parameters extracted from the Lightning's SDCARegressor
+        This method extracts from the LinearRegression the fitted parameters (i.e., weights and intercept).
+
+        :param linr_model: the fitted Sklearn LinearRegression object
+        :return: Python dictionary containing the fitted parameters extracted from the Sklearn's LinearRegression
         """
 
-        weights = sdca_model.coef_.T.ravel()
-        bias = 0
-        if hasattr(sdca_model, "intercept_"):
-            bias = sdca_model.intercept_
-            # bias = sdca_model.intercept_[0]
+        if not isinstance(linr_model, (LinearRegression)):
+            raise TypeError(
+                "Wrong data type for parameter sgd_model. Only Sklearn LinearRegression data type is allowed.")
+
+        weights = linr_model.coef_.ravel()
+        bias = linr_model.intercept_
 
         return {"weights": weights, "bias": bias}
 
@@ -33,8 +36,8 @@ class SDCARegressorSQL(object):
 
         :param weights: the regression weights
         :param columns: the feature names
-        :param table_name: the name of the table where read the data
-        :return: the portion of the SQL query which implements regression dot products
+        :param table_name: the name of the table or the subquery where to read the data
+        :return: the portion of the SQL query which implements the regression dot products
         """
 
         if not isinstance(weights, Iterable):
@@ -59,7 +62,8 @@ class SDCARegressorSQL(object):
             col = columns[i]
             query += "({} * {}) AS {} ,".format(col, weights[i], col)
 
-        query = query[:-1] # remove the last ',ì
+        query = query[:-1] # remove the last ','
+
         query += " FROM {}".format(table_name)
 
         return query
@@ -72,18 +76,19 @@ class SDCARegressorSQL(object):
 
         :param bias: the regression bias
         :param columns: the feature names
-        :param table_name: the table name or subquery where to read the data
+        :param table_name: the name of the table or the subquery where to read the data
         :return: the portion of the SQL query which implements the regression dot product linear combination
         """
 
-        if not isinstance(bias, (int, float)):
-            raise TypeError("Wrong data type for parameter bias. Only numeric data type is allowed.")
+        if not isinstance(bias, float):
+            raise TypeError("Wrong data type for parameter bias. Only float data type is allowed.")
 
         if not isinstance(columns, Iterable):
             raise TypeError("Wrong data type for parameter columns. Only iterable data type is allowed.")
 
-        if not isinstance(table_name, str):
-            raise TypeError("Wrong data type for parameter table_name. Only string data type is allowed.")
+        if table_name is not None:
+            if not isinstance(table_name, str):
+                raise TypeError("Wrong data type for parameter table_name. Only string data type is allowed.")
 
         for col in columns:
             if not isinstance(col, str):
@@ -95,26 +100,25 @@ class SDCARegressorSQL(object):
             query += "{} +".format(col)
 
         query += "{}".format(bias)
-        query += ") AS Score,"
-        query = query[:-1]
+        query += ") AS Score"
 
         query += " FROM {}".format(table_name)
 
         return query
 
-    def query(self, sdca_model, features, table_name):
+    def query(self, linr_model, features, table_name):
         """
-        This method creates the SQL query that performs the prediction with a SDCARegressor.
+        This method creates the SQL query that performs the LinearRegression inference.
 
-        :param sdca_model: the fitted Sklearn LogisticRegression object
+        :param linr_model: the fitted Sklearn LinearRegression object
         :param features: the list of features
         :param table_name: the name of the table or the subquery where to read the data
-        :return: the SQL query that implements the SDCA regression inference
+        :return: the SQL query that implements the LinearRegression inference
         """
 
-        if not isinstance(sdca_model, SDCARegressor):
+        if not isinstance(linr_model, LinearRegression):
             raise TypeError(
-                "Wrong data type for parameter sdca_regressor. Only Lightning SDCARegressor data type is allowed.")
+                "Wrong data type for parameter sgd_model. Only Sklearn LinearRegression data type is allowed.")
 
         if not isinstance(features, Iterable):
             raise TypeError("Wrong data type for parameter features. Only iterable data type is allowed.")
@@ -123,16 +127,16 @@ class SDCARegressorSQL(object):
             if not isinstance(f, str):
                 raise TypeError("Wrong data type for single features. Only string data type is allowed.")
 
-        if table_name is not None:
-            if not isinstance(table_name, str):
-                raise TypeError("Wrong data type for parameter table_name. Only string data type is allowed.")
+        if not isinstance(table_name, str):
+            raise TypeError("Wrong data type for parameter table_name. Only string data type is allowed.")
 
-        params = SDCARegressorSQL.get_params(sdca_model)
+        # extract the parameters from the LinearRegression model
+        params = LINRModelSQL.get_params(linr_model)
         weights = params["weights"]
         bias = params["bias"]
 
-        # create the SQL query that performs the prediction with a SDCARegressor
-        subquery = SDCARegressorSQL._sql_regression_part1(weights, features, table_name)
-        query = SDCARegressorSQL._sql_regression_part2(bias, features, "({}) AS F ".format(subquery))
+        # create the SQL query that implements the LinearRegression inference
+        subquery = LINRModelSQL._sql_regression_part1(weights, features, table_name)
+        query = LINRModelSQL._sql_regression_part2(bias, features, "({}) AS F ".format(subquery))
 
         return query

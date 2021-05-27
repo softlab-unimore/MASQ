@@ -7,6 +7,9 @@ class SGDModelSQL(object):
     This class implements the SQL wrapper for a Sklearn's SGDRegressor/Classifier object.
     """
 
+    def reset_optimization(self):
+        pass
+
     @staticmethod
     def get_params(sgd_model):
         """

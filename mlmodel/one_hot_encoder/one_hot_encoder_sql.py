@@ -1,6 +1,7 @@
 from sklearn.preprocessing import OneHotEncoder
 from collections import Iterable
 
+
 class OneHotEncoderSQL(object):
     """
     This class implements the SQL wrapper for a Sklearn OneHotEncoder object.
@@ -23,12 +24,13 @@ class OneHotEncoderSQL(object):
         ohe_query = "SELECT "
 
         # implement one-hot encoding in SQL
-        for ohe_feature_map in ohe_map:
-            feature_after_ohe = ohe_feature_map["feature_after_ohe"]
+        for feature_after_ohe in ohe_map:
+            # feature_after_ohe = ohe_feature_map["feature_after_ohe"]
+            ohe_feature_map = ohe_map[feature_after_ohe]
             feature_before_ohe = ohe_feature_map["feature_before_ohe"]
             value = ohe_feature_map["value"]
 
-            ohe_query += "CASE WHEN {} = '{}' THEN 1 ELSE 0 END AS {},\n".format(feature_before_ohe, value,
+            ohe_query += "CASE WHEN `{}` = '{}' THEN 1 ELSE 0 END AS `{}`,\n".format(feature_before_ohe, value,
                                                                                  feature_after_ohe)
 
         # add the remaining features to the selection
@@ -82,7 +84,7 @@ class OneHotEncoderSQL(object):
         # get the output ohe-encoded feature names
         features_after_ohe = ohe.get_feature_names()
 
-        ohe_map = []
+        ohe_map = {}
         # loop over the categorical features obtained after the application of the Sklearn's One Hot Encoder
         for feature_after_ohe in features_after_ohe:
             # the categorical features after the Sklearn OHE follow the format x<column_id>_<column_val> (e.g., x1_a)
@@ -92,8 +94,7 @@ class OneHotEncoderSQL(object):
             # get categorical feature val
             value = feature_item[1]
 
-            ohe_mapping = {"feature_after_ohe": feature_after_ohe, "feature_before_ohe": feature, "value": value}
-            ohe_map.append(ohe_mapping)
+            ohe_map[feature_after_ohe] = {"feature_before_ohe": feature, "value": value}
 
         if prev_transform_features is None:
             prev_transform_features = []

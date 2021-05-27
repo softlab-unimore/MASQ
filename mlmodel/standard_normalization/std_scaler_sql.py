@@ -2,6 +2,7 @@ import numpy as np
 from sklearn.preprocessing import StandardScaler
 from collections import Iterable
 
+
 class StandardScalerSQL(object):
     """
     This class implements the SQL wrapper for a Sklearn StardardScaler object.
@@ -113,7 +114,7 @@ class StandardScalerSQL(object):
         query = "SELECT "
         # loop over the features to be normalized and create the portion of query that normalized each feature
         for i in range(len(norm_features)):
-            query += "({}-{})/({}) AS {},".format(norm_features[i], avgs[i], stds[i], norm_features[i])
+            query += "(`{}`-{})/({}) AS `{}`,".format(norm_features[i], avgs[i], stds[i], norm_features[i])
 
         # loop over the remaining features and insert them in the select clause
         for f in other_features:

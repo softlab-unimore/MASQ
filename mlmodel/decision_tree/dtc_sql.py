@@ -1,68 +1,92 @@
 import numpy as np
-from collections import Iterable
-from sklearn.tree import BaseDecisionTree, DecisionTreeClassifier, DecisionTreeRegressor
+from sklearn.tree import BaseDecisionTree
+
 
 class DTMSQL(object):
     """
-    This class implements the SQL wrapper for a Sklearn Decision Tree Model (DTM).
+    This class implements the SQL wrapper for a Sklearn's Decision Tree Model (DTM).
     """
 
-    def __init__(self, classification=False):
+    def __init__(self, classification: bool = False):
         """
-        This method initializes the variables needed for the Gradient Boosting Model wrapper.
+        This method initializes the state of the Decision Tree Model SQL wrapper.
 
-        :param classification: boolean flag that indicates whether the DTM is used in a classification or regression
-                               task
+        :param classification: boolean flag that indicates whether the DTM is used in classification or regression
         """
 
-        if not isinstance(classification, bool):
-            raise TypeError("Wrong data type for parameter classification. Only boolean data type is allowed.")
+        assert isinstance(classification, bool), "Only boolean data type is allowed for param 'classification'."
 
         self.classification = classification
+        self.nested = True
+        self.merge_ohe_features = None
+
+    def set_nested_implementation(self):
+        self.nested = True
+
+    def set_flat_implementation(self):
+        self.nested = False
 
     @staticmethod
-    def get_dtc_rules(tree, feature_names):
+    def _check_merge_ohe_features(merge_ohe_features: dict):
+        error_msg = "Wrong data format for parameter 'merge_ohe_features'."
+        assert isinstance(merge_ohe_features, dict), error_msg
+        params = ["feature_before_ohe", "value"]
+        for key, item in merge_ohe_features.items():
+            assert isinstance(key, str)
+            assert isinstance(item, dict), error_msg
+            assert all(p in params for p in item), error_msg
+            assert isinstance(item["feature_before_ohe"], str), error_msg
+            assert isinstance(item["value"], str), error_msg
+
+    def merge_ohe_with_trees(self, merge_ohe_features: dict):
+        DTMSQL._check_merge_ohe_features(merge_ohe_features)
+        self.merge_ohe_features = merge_ohe_features
+
+    def reset_optimization(self):
+        self.merge_ohe_features = None
+
+    @staticmethod
+    def get_flat_rules(tree: BaseDecisionTree, feature_names: list, is_classification: bool):
         """
-        This method extracts the rules from a "base or derived" Sklearn Decision Tree object.
-        A single rule is composed by multiple conditions (expressed as tuples) and a final integer value:
+        This method extracts the tree decision paths from a BaseDecisionTree object.
+        Each decision path is composed of multiple conditions (extracted from the tree internal nodes) and a final score
+        (extracted from the tree leaf). The following format is used to represent a single decision path:
          (parent_node_id, split (i.e., l for left/<= and r for right/>), parent_test_threshold, parent_test_features),
          (parent_node_id, split (i.e., l for left/<= and r for right/>), parent_test_threshold, parent_test_features),
          ...
-         node_id <- leaf node
-        The method outputs a flatten list containing the previous format repeated for each rule of the Decision Tree
-        object.
+         score
 
-        :param tree: "base or derived" Sklearn Decision Tree object
+        :param tree: BaseDecisionTree object
         :param feature_names: list of feature names
-        :return: ("base or derived" Sklearn Decision Tree object object, "base or derived" Sklearn Decision Tree rules)
+        :param is_classification: boolean flag that indicates whether the DTM is used in classification or regression
+        :return: list containing the tree decision paths
         """
 
-        if not isinstance(tree, BaseDecisionTree):
-            raise TypeError(
-                "Wrong data type for parameter tree. Only Sklearn BaseDecisionTree data type is allowed.")
-
-        if not isinstance(feature_names, Iterable):
-            raise TypeError("Wrong data type for parameter feature_names. Only iterable data type is allowed.")
-
+        assert isinstance(tree, BaseDecisionTree), "Only BaseDecisionTree data type is allowed for param 'tree'."
+        assert isinstance(feature_names, list), "Only list data type is allowed for param 'features_names'."
         for f in feature_names:
-            if not isinstance(f, str):
-                raise TypeError("Wrong data type for feature_names elements. Only string data type is allowed.")
+            assert isinstance(f, str)
+        assert isinstance(is_classification, bool), "Only bool data type is allowed for param 'is_classification'."
 
         decision_tree_rules = []
 
         left = tree.tree_.children_left  # left child for each node
         right = tree.tree_.children_right  # right child for each node
         threshold = tree.tree_.threshold  # test threshold for each node
-        features = [feature_names[i] for i in tree.tree_.feature]  # names of the features used by the tree
-        # (Sklearn provides the indexes of the feature)
-        progress_rule = 0
+        features = ["`{}`".format(feature_names[i]) for i in tree.tree_.feature]  # names of the features used by the tree
+        scores = tree.tree_.value
+        if is_classification:
+            classes = tree.classes_
 
-        def recurse(left, right, child, lineage=None):
+        def deep_visit_tree(left, right, child, lineage=None):
 
             # starting from the child node navigate the tree until the root is reached
 
             if lineage is None:  # if the current node is a leaf, save its id
-                lineage = [child]
+                if is_classification:
+                    lineage = [classes[np.argmax(scores[child][0])]]
+                else:
+                    lineage = [tree.tree_.value[child][0][0]]
             if child in left:  # if the current node is a left child get the parent and save the left direction
                 parent = np.where(left == child)[0].item()
                 split = 'l'
@@ -77,162 +101,68 @@ class DTMSQL(object):
                 lineage.reverse()
                 return lineage
             else:  # if the parent of the current node is not the root of the tree continue the path navigation
-                return recurse(left, right, parent, lineage)
+                return deep_visit_tree(left, right, parent, lineage)
 
         # get ids of child nodes
         idx = np.argwhere(left == -1)[:, 0]
+        if len(idx) == 1:   # if the tree is composed of a single leaf
+            if is_classification:
+                return [classes[np.argmax(scores[0][0])]]
+            else:
+                return [tree.tree_.value[0][0][0]]
         # loop over child nodes
         for child in idx:
             # find the path that connects the current child node with the root of the tree
-            for node in recurse(left, right, child):
+            for node in deep_visit_tree(left, right, child):
                 decision_tree_rules.append(node)
-                progress_rule += 1
 
-        return tree, decision_tree_rules
-
-    @staticmethod
-    def get_dtc_rules_by_level(tree, feature_names, weight=None):
-        """
-        This method extracts the rules from a "base or derived" Sklearn Decision Tree object and groups them by tree
-        level. In more details, all the tests applied in the same tree level are grouped.
-        Each test follows the format (feature, operator, threshold). A Python dictionary is return where the keys
-        correspond to the tree levels and the values to the list of tests.
-
-        :param tree: "base or derived" Sklearn Decision Tree object
-        :param feature_names: list of feature names
-        :param weight: (optional) parameter to weight the leaf scores
-        :return: (rules grouped by level, tree left children, tree right children)
-        """
-
-        if not isinstance(tree, BaseDecisionTree):
-            raise TypeError(
-                "Wrong data type for parameter tree. Only Sklearn BaseDecisionTree data type is allowed.")
-
-        if not isinstance(feature_names, Iterable):
-            raise TypeError("Wrong data type for parameter feature_names. Only iterable data type is allowed.")
-
-        for f in feature_names:
-            if not isinstance(f, str):
-                raise TypeError("Wrong data type for feature_names elements. Only string data type is allowed.")
-
-        if weight is not None:
-            if not isinstance(weight, (int, float)):
-                raise TypeError("Wrong data type for parameter weight. Only integer or float data type is allowed.")
-
-        decision_tree_rules = {}
-
-        # get for each node, left, right child nodes and threshold and features in their tests
-        left = tree.tree_.children_left  # left child for each node
-        right = tree.tree_.children_right  # right child for each node
-        thresholds = tree.tree_.threshold  # test threshold for each node
-        # features = [feature_names[i] for i in tree.tree_.feature]
-        features = tree.tree_.feature  # indexes of the features used by the tree
-
-        def visit_tree(node, parent, left, right, thresholds, features, level):
-
-            cond = None
-
-            # check if current node has a right child
-            if right[node] != -1:
-                if features[node] < 0:
-                    raise Exception("Trying to retrieving the feature name from leaf node.")
-                cond = (features[node], 'r', thresholds[node])  # , feature_names[features[node]])
-                # visit right child
-                visit_tree(right[node], node, left, right, thresholds, features, level + 1)
-
-            # check if current node has a left child
-            if left[node] != -1:
-                if features[node] < 0:
-                    raise Exception("Trying to retrieving the feature name from leaf node.")
-                cond = (features[node], 'l', thresholds[node])  # , feature_names[features[node]])
-                # visit left child
-                visit_tree(left[node], node, left, right, thresholds, features, level + 1)
-
-            # leaf node
-            if left[node] == -1 and right[node] == -1:
-                cond = tree.tree_.value[node][0][0]
-                # if the user provided a weight, modify the leaf score
-                if weight:
-                    cond *= weight
-
-            if level not in decision_tree_rules:
-                decision_tree_rules[level] = [(node, parent, cond)]
-            else:
-                decision_tree_rules[level].append((node, parent, cond))
-
-        # start tree visit from the root node
-        root = 0
-        visit_tree(root, -1, left, right, thresholds, features, 0)
-
-        return decision_tree_rules, left, right
+        return decision_tree_rules
 
     @staticmethod
-    def dtc_rules_to_sql(tree, decision_tree_rules, classification=False):
+    def _check_rule_format(rules: list):
         """
-        This method converts the rules extracted from a "base or derived" Sklearn Decision Tree object into SQL case
-        statements.
+        This method checks the format of the input rules. The right format is the one adopted by the 'get_flat_rules'
+        method.
 
-        :param tree: "base or derived" Sklearn Decision Tree object
-        :param decision_tree_rules: rules extracted from a "base or derived" Sklearn Decision Tree object with a format
-                                    compliant with the one provided by the get_dtc_rules function
-        :param classification: boolean flag that indicates whether the DTM is used in a classification or regression
-                       task
-        :return: list of SQL representations for each tree rule
+        :param rules: rules extracted from a BaseDecisionTree object to check
         """
-
-        if not isinstance(tree, BaseDecisionTree):
-            raise TypeError(
-                "Wrong data type for parameter tree. Only Sklearn BaseDecisionTree data type is allowed.")
-
-        if not isinstance(decision_tree_rules, Iterable):
-            raise TypeError("Wrong data type for parameter decision_tree_rules. Only iterable data type is allowed.")
-
-        for cond in decision_tree_rules:
-            if not isinstance(cond, (tuple, int, np.integer)):
-                raise TypeError(
-                    "Wrong data type for decision_tree_rules conditions. Only tuple or integer data type is allowed.")
-
+        assert isinstance(rules, list), "Only list data type is allowed for param 'rules'."
+        error_msg = "Wrong data format for param 'rules'."
+        for cond in rules:
+            assert isinstance(cond, (tuple, int, np.integer, np.float, float)), error_msg
             if isinstance(cond, tuple):
-                if len(cond) != 4:
-                    raise TypeError("Wrong data format for decision_tree_rules condition. Wrong length.")
-
-                if not isinstance(cond[0], (int, np.integer)):
-                    raise TypeError(
-                        "Wrong data format for decision_tree_rules condition. Wrong parent node id data type.")
-
-                if not isinstance(cond[1], str):
-                    raise TypeError(
-                        "Wrong data format for decision_tree_rules condition. Wrong split data type.")
-
-                if not isinstance(cond[2], (float, str)):
-                    raise TypeError(
-                        "Wrong data format for decision_tree_rules condition. Wrong parent test threshold data type.")
-
-                if not isinstance(cond[3], str):
-                    raise TypeError(
-                        "Wrong data format for decision_tree_rules condition. Wrong parent test feature data type.")
+                assert len(cond) == 4, error_msg
+                assert isinstance(cond[0], (int, np.integer)), error_msg
+                assert isinstance(cond[1], str), error_msg
+                assert isinstance(cond[2], (float, str)), error_msg
+                assert isinstance(cond[3], str), error_msg
             else:
-                if not isinstance(cond, (int, np.integer)):
-                    raise TypeError(
-                        "Wrong data format for decision_tree_rules condition. Wrong leaf node id data type.")
+                assert isinstance(cond, (int, np.integer, np.float, float)), error_msg
 
-        if not isinstance(classification, bool):
-            raise TypeError("Wrong data type for parameter classification. Only boolean data type is allowed.")
+    @staticmethod
+    def convert_rules_to_sql(rules: list):
+        """
+        This method converts the rules extracted from a BaseDecisionTree object into SQL case statements.
 
-        rules_sql = []
-        rule_string = "CASE WHEN "
+        :param rules: rules extracted from a BaseDecisionTree object
+        :return: string containing the SQL query
+        """
+
+        DTMSQL._check_rule_format(rules)
+
+        sql_query = ""
+        sql_string = " CASE WHEN "
         # loop over the rules
-        for item in decision_tree_rules:
+        for item in rules:
 
-            if not isinstance(item, tuple):  # the item is the index of a leaf node
-                rule_string = rule_string[:-5]  # remove 'WHEN '
-                if classification: # classification task
-                    predicted_class = np.argmax(tree.tree_.value[item][0]) # get leaf majority class
-                else: # regression task
-                    predicted_class = tree.tree_.value[item][0][0]  # get the leaf predicted score
-                rule_string += " THEN {}".format(predicted_class)
-                rules_sql.append(rule_string)
-                rule_string = "WHEN "
+            if not isinstance(item, tuple):  # the item is a leaf score
+                sql_string = sql_string[:-5]  # remove 'WHEN '
+                if sql_string == ' CASE ':  # case a tree is composed of only a leaf
+                    sql_query += str(item)
+                else:
+                    sql_string += " THEN {} ".format(item)
+                    sql_query += sql_string
+                sql_string = "WHEN "
             else:  # the item is a rule condition
                 op = item[1]
                 thr = item[2]
@@ -243,122 +173,183 @@ class DTMSQL(object):
                 else:  # when op is equals to '=' or '<>' the thr is a string
                     thr = "'{}'".format(thr)
                 feature_name = item[3]
-                rule_string += "{} {} {} and ".format(feature_name, op, thr)
+                sql_string += "{} {} {} and ".format(feature_name, op, thr)
+        if 'CASE' in sql_query: # ignore the case where a tree is composed of only a leaf
+            sql_query += "END "
 
-        return rules_sql
+        return sql_query
 
     @staticmethod
-    def get_params(dtm, features, classification=False, split_rules_by_tree_level=False):
+    def get_sql_flat_rules(tree: BaseDecisionTree, feature_names: list, is_classification: bool,
+                           merge_ohe_features: dict = None):
         """
-        This method extracts from the Sklearn Decision Tree Model all the fitted parameters (i.e., tree rules) needed to
-        replicate in SQL the inference. The extracted rules can be returned in multiple formats: flat list or grouped by
-        tree level.
+        This method extracts the rules from a BaseDecisionTree object and convert them in SQL.
 
-        :param dtm: "base or derived" Sklearn Decision Tree object
+        :param tree: BaseDecisionTree object
+        :param feature_names: list of feature names
+        :param is_classification: boolean flag that indicates whether the DTM is used in classification or regression
+        :param merge_ohe_features: (optional) ohe feature map to be merged in the decision rules
+        :return: string containing the SQL query
+        """
+
+        if merge_ohe_features is not None:
+            DTMSQL._check_merge_ohe_features(merge_ohe_features)
+
+        rules = DTMSQL.get_flat_rules(tree, feature_names, is_classification)
+        sql_query = DTMSQL.convert_rules_to_sql(rules)
+
+        return sql_query
+
+    @staticmethod
+    def get_sql_nested_rules(tree: BaseDecisionTree, feature_names: list, is_classification: bool,
+                             merge_ohe_features: dict = None):
+        """
+        This method extracts the rules from a BaseDecisionTree object and convert them in SQL.
+
+        :param tree: BaseDecisionTree object
+        :param feature_names: list of feature names
+        :param is_classification: boolean flag that indicates whether the DTM is used in classification or regression
+        :param merge_ohe_features: (optional) ohe feature map to be merged in the decision rules
+        :return: string containing the SQL query
+        """
+
+        assert isinstance(tree, BaseDecisionTree), "Only BaseDecisionTree data type is allowed for param 'tree'."
+        assert isinstance(feature_names, list), "Only list data type is allowed for param 'features_names'."
+        for f in feature_names:
+            assert isinstance(f, str)
+        assert isinstance(is_classification, bool), "Only bool data type is allowed for param 'is_classification'."
+        if merge_ohe_features is not None:
+            DTMSQL._check_merge_ohe_features(merge_ohe_features)
+
+        # get for each node, left, right child nodes, thresholds and features
+        left = tree.tree_.children_left  # left child for each node
+        right = tree.tree_.children_right  # right child for each node
+        thresholds = tree.tree_.threshold  # test threshold for each node
+        features = [feature_names[i] for i in tree.tree_.feature]
+        # features = tree.tree_.feature  # indexes of the features used by the tree
+        if is_classification:
+            classes = tree.classes_
+
+        def visit_tree(node):
+
+            # leaf node
+            if left[node] == -1 and right[node] == -1:
+                if is_classification:
+                    return " {} ".format(classes[np.argmax(tree.tree_.value[node][0])])
+                else:
+                    return " {} ".format(tree.tree_.value[node][0][0])
+
+            # internal node
+            op = '<='
+            feature = features[node]
+            thr = thresholds[node]
+
+            if merge_ohe_features is not None:
+                # if ohe features have to be merged in the decision tree, the tree conditions are changed
+                #   feature_after_ohe > 0.5 becomes original_cat_feature = val
+                #   feature_after_ohe <= 0.5 becomes original_cat_feature <> val
+                if feature in merge_ohe_features:                      # only categorical features should pass this test
+                    mof = merge_ohe_features[feature]
+                    feature = mof['feature_before_ohe']
+                    thr = "'{}'".format(mof['value'])
+                    op = '<>'
+
+            sql_dtm_rule = f" CASE WHEN `{feature}` {op} {thr} THEN"
+
+            # check if current node has a left child
+            if left[node] != -1:
+                sql_dtm_rule += visit_tree(left[node])
+
+            sql_dtm_rule += "ELSE"
+
+            # check if current node has a right child
+            if right[node] != -1:
+                sql_dtm_rule += visit_tree(right[node])
+
+            sql_dtm_rule += "END "
+
+            return sql_dtm_rule
+
+        # start tree visit from the root node
+        root = 0
+        sql_dtm_rules = visit_tree(root)
+
+        return sql_dtm_rules
+
+    @staticmethod
+    def get_params(dtm: BaseDecisionTree, features: list, is_classification: bool, nested: bool,
+                   merge_ohe_features: dict = None):
+        """
+        This method extracts the tree rules from the Sklearn's Decision Tree Model and creates their SQL representation.
+
+        :param dtm: BaseDecisionTree object
         :param features: the list of features
-        :param classification: boolean flag that indicates whether the DTM is used in a classification or regression
-                               task
-        :param split_rules_by_tree_level: (optional) boolean flag that indicates whether the extracted rules have to be
-                                          grouped by tree level
-        :return: Python dictionary containing the DTM fitted parameters (i.e., tree rules)
+        :param is_classification: boolean flag that indicates whether the DTM is used in classification or regression
+        :param nested: boolean flag that indicates whether to use the nested SQL conversion technique
+        :param merge_ohe_features: (optional) ohe feature map to be merged in the decision rules
+        :return: Python dictionary containing the parameters extracted from the fitted DTM
         """
 
-        if not isinstance(dtm, (DecisionTreeClassifier, DecisionTreeRegressor)):
-            error_msg = "Wrong data type for parameter gbm. "
-            error_msg += "Only the Sklearn DecisionTreeClassifier/DecisionTreeRegressor type is allowed."
-            raise TypeError(error_msg)
-
-        if not isinstance(features, Iterable):
-            raise TypeError("Wrong data type for parameter features. Only iterable data type is allowed.")
-
+        assert isinstance(dtm, BaseDecisionTree), "Only BaseDecisionTree type is allowed fo param 'dtm'."
+        assert isinstance(features, list), "Only list data type is allowed for param 'features'"
         for f in features:
-            if not isinstance(f, str):
-                raise TypeError("Wrong data type for single features. Only string data type is allowed.")
-
-        if not isinstance(classification, bool):
-            raise TypeError("Wrong data type for parameter classification. Only boolean data type is allowed.")
-
-        if not isinstance(split_rules_by_tree_level, bool):
-            raise TypeError(
-                "Wrong data type for parameter split_rules_by_tree_level. Only boolean data type is allowed.")
+            assert isinstance(f, str)
+        assert isinstance(is_classification, bool), "Only boolean data type is allowed for param 'is_classification'."
+        assert isinstance(nested, bool)
+        if merge_ohe_features is not None:
+            DTMSQL._check_merge_ohe_features(merge_ohe_features)
 
         # extract the decision rules from the Decision Tree Model
-        if not split_rules_by_tree_level:
-            # extract the rules from the tree
-            estimator, decision_tree_rules = DTMSQL.get_dtc_rules(dtm, features)
-            # convert the rules in a SQL format
-            rules_strings = DTMSQL.dtc_rules_to_sql(dtm, decision_tree_rules, classification)
-            # save the rules, the SQL rules and the decision tree model
-            tree_params = {"estimator": estimator, "string_rules": ' '.join(rules_strings),
-                           "weight": 1, "rules": decision_tree_rules}
+        if nested:
+            sql_rules = DTMSQL.get_sql_nested_rules(dtm, features, is_classification,
+                                                    merge_ohe_features=merge_ohe_features)
         else:
-            # get the tree rules grouped by tree levels
-            decision_tree_rules, left, right = DTMSQL.get_dtc_rules_by_level(dtm, features, 1)
-
-            # save tree parameters
-            tree_params = {"estimator": dtm, "string_rules": None, "weight": 1,
-                           "rules": decision_tree_rules, "left_nodes": left, "right_nodes": right}
+            sql_rules = DTMSQL.get_sql_flat_rules(dtm, features, is_classification,
+                                                  merge_ohe_features=merge_ohe_features)
+        tree_params = {"estimator": dtm, "sql_rules": sql_rules}
 
         return tree_params
 
-    def _dtm_to_sql(self, tree_params, table_name):
+    def _dtm_to_sql(self, tree_params: dict, table_name: str):
         """
-        This method generates the SQL query that implements the DTM inference according to multiple approach (i.e.,
-        rule-based approach where a CASE statement for each tree rule is created, level-based approach where a CASE
-        statement for each level of tree structure is generated).
+        This method generates the SQL query that implements the DTM inference.
 
         :param tree_params: the parameters extracted from the Sklearn's DTM object
         :param table_name: the name of the table from which the SQL query will read
-        :return: the SQL query that implements the GBM inference
+        :return: the SQL query that implements the DTM inference
         """
 
-        if not isinstance(tree_params, dict):
-            raise TypeError("Wrong data type for parameter tree_params. Only Python dictionary data type is allowed.")
+        assert isinstance(tree_params, dict), "Only Python dictionary data type is allowed for param 'tree_params'."
+        assert isinstance(table_name, str), "Only string data type is allowed for param 'table_name'."
+        params_keys = ["estimator", "sql_rules"]
+        assert all(p in params_keys for p in tree_params), "Wrong data format for parameter 'tree_params'."
 
-        if not isinstance(table_name, str):
-            raise TypeError("Wrong data type for parameter table_name. Only string data type is allowed.")
-
-        params_keys = ["estimator", "string_rules", "weight", "rules"]
-        if not all(p in params_keys for p in tree_params):
-            raise ValueError("Wrong data format for parameter tree_params.")
-
-        query = "SELECT "
-        # create a CASE statement for the tree
-        query += "{} END AS Score".format(tree_params["string_rules"])
-
+        query = "SELECT{} AS Score".format(tree_params["sql_rules"])
         query += " FROM {}".format(table_name)
 
         return query
 
-    def query(self, dtm, features, table_name):
+    def query(self, dtm: BaseDecisionTree, features: list, table_name: str):
         """
-        This method generates the SQL query that implements the GBM inference.
+        This method generates the SQL query that implements the DTM inference.
 
         :param dtm: the fitted Sklearn Decision Tree model
         :param features: the list of features
         :param table_name: the name of the table or the subquery where to read the data
-        :return: the SQL query that implements the GBM inference
+        :return: string that contains the SQL query that implements the DTM inference
         """
 
-        if not isinstance(dtm, (DecisionTreeClassifier, DecisionTreeRegressor)):
-            error_msg = "Wrong data type for parameter gbm. "
-            error_msg += "Only the Sklearn DecisionTreeClassifier/DecisionTreeRegressor type is allowed."
-            raise TypeError(error_msg)
-
-        if not isinstance(features, Iterable):
-            raise TypeError("Wrong data type for parameter features. Only iterable data type is allowed.")
-
+        assert isinstance(dtm, BaseDecisionTree), "Only the BaseDecisionTree type is allowed fo param 'dtm'."
+        assert isinstance(features, list), "Only list data type is allowed for param 'features'"
         for f in features:
-            if not isinstance(f, str):
-                raise TypeError("Wrong data type for single features. Only string data type is allowed.")
-
-        if not isinstance(table_name, str):
-            raise TypeError("Wrong data type for parameter table_name. Only string data type is allowed.")
+            assert isinstance(f, str)
+        assert isinstance(table_name, str), "Only string data type is allowed for param 'table_name'."
 
         # extract the parameters (i.e., the decision rules) from the fitted DTM
-        tree_parameters = DTMSQL.get_params(dtm, features, classification=self.classification)
+        dtm_params = DTMSQL.get_params(dtm, features, is_classification=self.classification, nested=self.nested,
+                                       merge_ohe_features=self.merge_ohe_features)
 
         # create the SQL query that implements the DTM inference
-        query = self._dtm_to_sql(tree_parameters, table_name)
+        query = self._dtm_to_sql(dtm_params, table_name)
 
         return query
