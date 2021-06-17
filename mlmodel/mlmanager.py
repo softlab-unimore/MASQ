@@ -1,4 +1,5 @@
-from sklearn.ensemble import GradientBoostingRegressor, GradientBoostingClassifier, RandomForestClassifier, RandomForestRegressor
+from sklearn.ensemble import GradientBoostingRegressor, GradientBoostingClassifier, RandomForestClassifier, \
+    RandomForestRegressor
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.linear_model import LogisticRegression, SGDRegressor, LinearRegression
 from sklearn.neural_network import MLPClassifier, MLPRegressor
@@ -21,24 +22,40 @@ from mlmodel.random_forest.rf_sql import RFMSQL
 # from mlmodel.multi_layer_perceptron.mlp_sql import MLPSQL
 from mlmodel.linear_regressor.linr_sql import LINRModelSQL
 
-from sklearn.metrics import r2_score, accuracy_score, precision_score, recall_score
+from sklearn.metrics import r2_score, accuracy_score, precision_score, recall_score, f1_score, mean_squared_error, \
+    mean_absolute_error
 
 import numpy as np
+
+
+def f1_score_variant(y_true, y_pred):
+    return f1_score(y_true, y_pred, average='macro')
+
+
+def recall_score_variant(y_true, y_pred):
+    return recall_score(y_true, y_pred, average='macro')
+
+
+def precision_score_variant(y_true, y_pred):
+    return precision_score(y_true, y_pred, average='macro')
 
 
 class MLManager(object):
     model_types = {
         'GradientBoostingRegressor': GradientBoostingRegressor(max_leaf_nodes=20, n_estimators=100, min_samples_leaf=10,
                                                                learning_rate=0.2, random_state=24),
-        'GradientBoostingClassifier': GradientBoostingClassifier(max_leaf_nodes=20, n_estimators=100, min_samples_leaf=10,
-                                                               learning_rate=0.2, random_state=24),
+        'GradientBoostingClassifier': GradientBoostingClassifier(max_leaf_nodes=20, n_estimators=100,
+                                                                 min_samples_leaf=10,
+                                                                 learning_rate=0.2, random_state=24),
         'LogisticRegression': LogisticRegression(random_state=24),
         'SGDRegressor': SGDRegressor(),
         # 'SDCARegressor': SDCARegressor(),
         'DecisionTreeClassifier': DecisionTreeClassifier(max_leaf_nodes=20, min_samples_leaf=10, random_state=24),
         'DecisionTreeRegressor': DecisionTreeRegressor(max_depth=3, random_state=42),
-        'RandomForestClassifier': RandomForestClassifier(max_leaf_nodes=20, n_estimators=100, min_samples_leaf=10, random_state=24),
-        'RandomForestRegressor': RandomForestRegressor(max_leaf_nodes=20, n_estimators=100, min_samples_leaf=10, random_state=24),
+        'RandomForestClassifier': RandomForestClassifier(max_leaf_nodes=20, n_estimators=100, min_samples_leaf=10,
+                                                         random_state=24),
+        'RandomForestRegressor': RandomForestRegressor(max_leaf_nodes=20, n_estimators=100, min_samples_leaf=10,
+                                                       random_state=24),
         'MLPClassifier': MLPClassifier(hidden_layer_sizes=(5, 5, 5)),
         'MLPRegressor': MLPRegressor(hidden_layer_sizes=(5, 5, 5)),
         'LinearRegression': LinearRegression(),
@@ -71,10 +88,13 @@ class MLManager(object):
     }
 
     metric_types = {
-        'r2_score': r2_score,
         'accuracy_score': accuracy_score,
-        'precision_score': precision_score,
-        'recall_score': recall_score
+        'f1_score': f1_score_variant,
+        'precision_score': precision_score_variant,
+        'recall_score': recall_score_variant,
+        'r2_score': r2_score,
+        'mae': mean_absolute_error,
+        'mse': mean_squared_error,
     }
 
     model_name = None
