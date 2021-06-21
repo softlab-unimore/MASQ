@@ -807,11 +807,13 @@ class ScenarioFastDetail(APIView):
             ds_batch.to_sql('batch', con=scenario["db_url"], if_exists="replace", index=False)
 
             # Generate query using MLManager
-            query = manager.generate_query(scenario['pipeline'].file, scenario['table'], features, scenario['optimizer'])
+            dbms = DBMSUtils.get_dbms_from_str_connection(scenario['db_url'])
+            queries, query = manager.generate_query(scenario['pipeline'].file, scenario['table'], features, dbms, scenario['optimizer'])
 
             # Execute query
             t_start = datetime.now()
-            _ = execute_query(scenario['db_url'], query)
+            # Execute query
+            _ = execute_multi_queries(scenario["db_url"], queries)
             t_end = datetime.now()
 
             t_db.append(t_end - t_start)

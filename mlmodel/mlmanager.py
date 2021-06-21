@@ -125,9 +125,11 @@ class MLManager(object):
         transforms = {}
         for transform in self.transforms:
             if transform['transform_type'] not in transforms:
-                transforms[transform['transform_type']] = [transform['transform_column']]
+                # transforms[transform['transform_type']] = [transform['transform_column']]
+                transforms[transform['transform_type']] = transform['transform_column']
             else:
-                transforms[transform['transform_type']].append(transform['transform_column'])
+                # transforms[transform['transform_type']].append(transform['transform_column'])
+                transforms[transform['transform_type']] += transform['transform_column']
 
         pipeline_transforms = []
         for k, val in transforms.items():
