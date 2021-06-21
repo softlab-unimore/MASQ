@@ -18,10 +18,12 @@ from msp.api.serializers import ScenarioSerializer, ResultScenarioSerializer
 from mlmodel.mlmanager import MLManager
 from mlmodel.loader import load_model, save_model
 from dbconnection.connector import get_tables, get_columns, \
-    get_table, get_column, execute_query
+    get_table, get_column, execute_query, execute_multi_queries
 from msp.models import Scenario, ResultScenario, Document
 
 from workflow.training import get_train_test
+
+from utils.dbms_utils import DBMSUtils
 
 
 def get_scenario_object(scenario_id):
@@ -619,10 +621,12 @@ class ScenarioTestDetail(APIView):
             inference_start = datetime.now()
 
             # Generate query using MLManager
-            query = manager.generate_query(scenario.pipeline.file, scenario.table, features, scenario.optimizer)
+            dbms = DBMSUtils.get_dbms_from_str_connection(scenario.db_url)
+            queries, query = manager.generate_query(scenario.pipeline.file, scenario.table, features, dbms,
+                                                    scenario.optimizer)
 
             # Execute query
-            y_pred = execute_query(scenario.db_url, query)
+            y_pred = execute_multi_queries(scenario.db_url, queries)
             y_pred = pd.Series(y_pred.iloc[:, 0], name='Label')
 
             inference_end = datetime.now()
