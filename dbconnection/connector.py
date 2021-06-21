@@ -2,9 +2,19 @@ import logging
 import pandas as pd
 from sqlalchemy import create_engine, MetaData
 from sqlalchemy.exc import SQLAlchemyError
+import urllib
+
+
+def check_url_connection(url_connection):
+    if 'SQL Server' in url_connection:
+        odbc_params = urllib.parse.quote_plus(url_connection)
+        url_connection = f'mssql+pyodbc:///?odbc_connect={odbc_params}'
+
+    return url_connection
 
 
 def get_connector(url_connection):
+    url_connection = check_url_connection(url_connection)
     try:
         engine = create_engine(url_connection)
         engine.connect()
@@ -15,6 +25,7 @@ def get_connector(url_connection):
 
 
 def get_tables(url_connection):
+    url_connection = check_url_connection(url_connection)
     try:
         engine = create_engine(url_connection)
         meta_data = MetaData(bind=engine)
@@ -32,6 +43,7 @@ def check_table(connector, table):
 
 
 def check_column(url_connection, table_name, column_name):
+    url_connection = check_url_connection(url_connection)
     engine = create_engine(url_connection)
     meta_data = MetaData(bind=engine)
     meta_data.reflect()
@@ -45,6 +57,7 @@ def check_column(url_connection, table_name, column_name):
 
 
 def get_table(url_connection, table_name):
+    url_connection = check_url_connection(url_connection)
     try:
         engine = create_engine(url_connection)
         query = "select * from {}".format(table_name)
@@ -56,6 +69,7 @@ def get_table(url_connection, table_name):
 
 
 def get_columns(url_connection, table_name):
+    url_connection = check_url_connection(url_connection)
     try:
         # ToDo: modify query using Metadata
         engine = create_engine(url_connection)
@@ -68,12 +82,26 @@ def get_columns(url_connection, table_name):
 
 
 def execute_query(url_connection, query):
+    url_connection = check_url_connection(url_connection)
     engine = create_engine(url_connection)
     ds = pd.read_sql(query, engine)
     return ds
 
 
+def execute_multi_queries(url_connection, queries):
+    url_connection = check_url_connection(url_connection)
+    engine = create_engine(url_connection)
+    for q in queries[:-1]:
+        for qq in q.split(';'):
+            engine.execute(qq)
+
+    ds = pd.read_sql(queries[-1], engine)
+
+    return ds
+
+
 def get_column(url_connection, table_name, column_name):
+    url_connection = check_url_connection(url_connection)
     try:
         engine = create_engine(url_connection)
         with engine.connect() as connection:

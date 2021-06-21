@@ -20,6 +20,15 @@ class GBMSQL(object):
         self.classification = classification
         self.nested = True
         self.merge_ohe_features = None
+        self.dbms = None
+        self.mode = None
+
+    def set_mode(self, mode: str):
+        assert isinstance(mode, str), "Wrong data type for param 'mode'."
+        self.mode = mode
+
+    def set_dbms(self, dbms: str):
+        self.dbms = dbms
 
     def set_nested_implementation(self):
         self.nested = True
@@ -48,7 +57,7 @@ class GBMSQL(object):
 
     @staticmethod
     def get_params(gbm: (GradientBoostingClassifier, GradientBoostingRegressor), features: list,
-                   is_classification: bool, nested: bool, merge_ohe_features: dict = None):
+                   is_classification: bool, nested: bool, dbms: str, merge_ohe_features: dict = None):
         """
         This method extracts the tree rules from the Sklearn's Gradient Boosting Model and creates their SQL
         representation.
@@ -57,6 +66,7 @@ class GBMSQL(object):
         :param features: the list of features
         :param is_classification: boolean flag that indicates whether the GBM is used in classification or regression
         :param nested: boolean flag that indicates whether to use the nested SQL conversion technique
+        :param dbms: the name of the dbms
         :param merge_ohe_features: (optional) ohe feature map to be merged in the decision rules
         :return: Python dictionary containing the parameters extracted from the fitted GBM
         """
@@ -79,7 +89,7 @@ class GBMSQL(object):
                 # a GradientBoosting classifier fits n_classes parallel decision tree regressor, so both in
                 # classification and regression tasks the parameters of a generic regressor tree has to be extracted
                 class_tree_params = DTMSQL.get_params(class_tree, list(features), is_classification=False,
-                                                      nested=nested, merge_ohe_features=merge_ohe_features)
+                                                      nested=nested, dbms=dbms, merge_ohe_features=merge_ohe_features)
                 class_tree_params["weight"] = gbm.learning_rate
                 tree_params.append(class_tree_params)
 
@@ -223,9 +233,10 @@ class GBMSQL(object):
 
         # extract the parameters (i.e., the decision rules) from the fitted GBM
         gbm_params = GBMSQL.get_params(gbm, features, is_classification=self.classification, nested=self.nested,
-                                       merge_ohe_features=self.merge_ohe_features)
+                                       dbms=self.dbms, merge_ohe_features=self.merge_ohe_features)
 
         # create the SQL query that implements the GBM inference
+        pre_inference_query = None
         query = self._gbm_to_sql(gbm_params, table_name)
 
-        return query
+        return pre_inference_query, query

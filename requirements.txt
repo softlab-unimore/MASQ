@@ -32,6 +32,7 @@ post==2019.4.13
 public==2019.4.13
 py==1.8.2
 pycparser==2.19
+pymssql==2.2.1
 PyMySQL==0.9.3
 pyparsing==2.4.7
 pytest==5.4.3

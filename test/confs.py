@@ -27,7 +27,7 @@ class Models(object):
 
     dtr = {
         'name': 'DecisionTreeRegressor',
-        'obj': DecisionTreeRegressor(max_depth=3, random_state=42),
+        'obj': DecisionTreeRegressor(max_depth=5, random_state=42),
     }
 
     rfc = {
@@ -42,7 +42,7 @@ class Models(object):
 
     sgdr = {
         'name': 'SGDRegressor',
-        'obj': SGDRegressor()
+        'obj': SGDRegressor(random_state=42)
     }
 
     logr = {

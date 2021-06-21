@@ -23,6 +23,15 @@ class RFMSQL(object):
         self.classification = classification
         self.nested = True
         self.merge_ohe_features = None
+        self.dbms = None
+        self.mode = None
+
+    def set_mode(self, mode: str):
+        assert isinstance(mode, str), "Wrong data type for param 'mode'."
+        self.mode = mode
+
+    def set_dbms(self, dbms: str):
+        self.dbms = dbms
 
     def set_nested_implementation(self):
         self.nested = True
@@ -51,7 +60,7 @@ class RFMSQL(object):
 
     @staticmethod
     def get_params(rfm: (RandomForestClassifier, RandomForestRegressor), features: list, is_classification: bool,
-                   nested: bool, merge_ohe_features: dict = None):
+                   nested: bool, dbms: str, merge_ohe_features: dict = None):
         """
         This method extracts the tree rules from the Sklearn's Random Forest Model and creates their SQL representation.
 
@@ -59,6 +68,7 @@ class RFMSQL(object):
         :param features: the list of features
         :param is_classification: boolean flag that indicates whether the RFM is used in classification or regression
         :param nested: boolean flag that indicates whether to use the nested SQL conversion technique
+        :param dbms: the name of the dbms
         :param merge_ohe_features: (optional) ohe feature map to be merged in the decision rules
         :return: Python dictionary containing the parameters extracted from the fitted RFM
         """
@@ -74,7 +84,7 @@ class RFMSQL(object):
         for index, tree in enumerate(trees):
 
             # extract the rules from the current tree
-            tree_params = DTMSQL.get_params(tree, list(features), is_classification, nested,
+            tree_params = DTMSQL.get_params(tree, list(features), is_classification, nested, dbms=dbms,
                                             merge_ohe_features=merge_ohe_features)
             tree_params["weight"] = 1.0/len(trees)
             trees_params.append(tree_params)
@@ -123,11 +133,11 @@ class RFMSQL(object):
 
             query += sql_case
 
-        query = query[:-1] # remove the last ","
+        query = query[:-1]  # remove the last ","
 
         query += " FROM {}".format(table_name)
 
-        if self.classification: # classification task
+        if self.classification:  # classification task
 
             # find the majority class
 
@@ -138,10 +148,10 @@ class RFMSQL(object):
 
                 for i in range(len(trees_params)):
                     majority_class_query += "CASE WHEN tree_{} = {} THEN 1 ELSE 0 END + ".format(i, class_label)
-                majority_class_query = majority_class_query[:-3] # remove the last ' + '
+                majority_class_query = majority_class_query[:-3]  # remove the last ' + '
 
                 majority_class_query += ") AS class_{}, ".format(class_ix)
-            majority_class_query = majority_class_query[:-2] # remove the last ', '
+            majority_class_query = majority_class_query[:-2]  # remove the last ', '
             majority_class_query += " FROM ({}) AS F".format(query)
 
             # find the majority class label
@@ -167,7 +177,7 @@ class RFMSQL(object):
                 tree_weight = trees_params[i]["weight"]
                 external_query += "{} * tree_{} + ".format(tree_weight, i)
 
-            external_query = external_query[:-3] # remove the last ' + '
+            external_query = external_query[:-3]  # remove the last ' + '
             external_query += ") AS Score"
 
             # combine internal and external queries in a single query
@@ -194,9 +204,10 @@ class RFMSQL(object):
 
         # extract the parameters (i.e., the decision rules) from the fitted RFM
         rfm_params = RFMSQL.get_params(rfm, features, is_classification=self.classification, nested=self.nested,
-                                       merge_ohe_features=self.merge_ohe_features)
+                                       dbms=self.dbms, merge_ohe_features=self.merge_ohe_features)
 
         # create the SQL query that implements the RFM inference
+        pre_inference_query = None
         query = self._rfm_to_sql(rfm_params, table_name)
 
-        return query
+        return pre_inference_query, query

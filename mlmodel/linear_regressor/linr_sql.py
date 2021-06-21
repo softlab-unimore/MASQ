@@ -1,11 +1,23 @@
 from sklearn.linear_model import LinearRegression
 from collections import Iterable
+from utils.dbms_utils import DBMSUtils
 
 
 class LINRModelSQL(object):
     """
     This class implements the SQL wrapper for a Sklearn's LinearRegression object.
     """
+
+    def __init__(self):
+        self.dbms = None
+        self.mode = None
+
+    def set_mode(self, mode: str):
+        assert isinstance(mode, str), "Wrong data type for param 'mode'."
+        self.mode = mode
+
+    def set_dbms(self, dbms: str):
+        self.dbms = dbms
 
     def reset_optimization(self):
         pass
@@ -29,7 +41,7 @@ class LINRModelSQL(object):
         return {"weights": weights, "bias": bias}
 
     @staticmethod
-    def _sql_regression_part1(weights, columns, table_name):
+    def _sql_regression_part1(weights, columns, table_name, dbms: str):
         """
         This method creates the portion of the SQL query responsible for the application of the dot product between
         regression weights and features.
@@ -37,6 +49,7 @@ class LINRModelSQL(object):
         :param weights: the regression weights
         :param columns: the feature names
         :param table_name: the name of the table or the subquery where to read the data
+        :param dbms: the name of the dbms
         :return: the portion of the SQL query which implements the regression dot products
         """
 
@@ -57,19 +70,21 @@ class LINRModelSQL(object):
             if not isinstance(col, str):
                 raise TypeError("Wrong data type for columns elements. Only string data type is allowed.")
 
+        dbms_util = DBMSUtils()
+
         query = "SELECT "
         for i in range(len(columns)):
-            col = columns[i]
+            col = dbms_util.get_delimited_col(dbms, columns[i])
             query += "({} * {}) AS {} ,".format(col, weights[i], col)
 
-        query = query[:-1] # remove the last ','
+        query = query[:-1]  # remove the last ','
 
         query += " FROM {}".format(table_name)
 
         return query
 
     @staticmethod
-    def _sql_regression_part2(bias, columns, table_name):
+    def _sql_regression_part2(bias, columns, table_name, dbms: str):
         """
         This method creates the portion of the SQL query responsible for the application of the linear combination over
         the regression dot products.
@@ -77,6 +92,7 @@ class LINRModelSQL(object):
         :param bias: the regression bias
         :param columns: the feature names
         :param table_name: the name of the table or the subquery where to read the data
+        :param dbms: the name of the dbms
         :return: the portion of the SQL query which implements the regression dot product linear combination
         """
 
@@ -94,9 +110,12 @@ class LINRModelSQL(object):
             if not isinstance(col, str):
                 raise TypeError("Wrong data type for columns elements. Only string data type is allowed.")
 
+        dbms_util = DBMSUtils()
+
         query = "SELECT "
         query += " ( "
         for col in columns:
+            col = dbms_util.get_delimited_col(dbms, col)
             query += "{} +".format(col)
 
         query += "{}".format(bias)
@@ -136,7 +155,8 @@ class LINRModelSQL(object):
         bias = params["bias"]
 
         # create the SQL query that implements the LinearRegression inference
-        subquery = LINRModelSQL._sql_regression_part1(weights, features, table_name)
-        query = LINRModelSQL._sql_regression_part2(bias, features, "({}) AS F ".format(subquery))
+        pre_inference_query = None
+        subquery = LINRModelSQL._sql_regression_part1(weights, features, table_name, dbms=self.dbms)
+        query = LINRModelSQL._sql_regression_part2(bias, features, "({}) AS F ".format(subquery), dbms=self.dbms)
 
-        return query
+        return pre_inference_query, query

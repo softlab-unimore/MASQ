@@ -1,5 +1,6 @@
 import numpy as np
 from sklearn.tree import BaseDecisionTree
+from utils.dbms_utils import DBMSUtils
 
 
 class DTMSQL(object):
@@ -19,6 +20,15 @@ class DTMSQL(object):
         self.classification = classification
         self.nested = True
         self.merge_ohe_features = None
+        self.dbms = None
+        self.mode = None
+
+    def set_mode(self, mode: str):
+        assert isinstance(mode, str), "Wrong data type for param 'mode'."
+        self.mode = mode
+
+    def set_dbms(self, dbms: str):
+        self.dbms = dbms
 
     def set_nested_implementation(self):
         self.nested = True
@@ -73,7 +83,7 @@ class DTMSQL(object):
         left = tree.tree_.children_left  # left child for each node
         right = tree.tree_.children_right  # right child for each node
         threshold = tree.tree_.threshold  # test threshold for each node
-        features = ["`{}`".format(feature_names[i]) for i in tree.tree_.feature]  # names of the features used by the tree
+        features = [f"{feature_names[i]}" for i in tree.tree_.feature]  # names of the features used by the tree
         scores = tree.tree_.value
         if is_classification:
             classes = tree.classes_
@@ -140,15 +150,21 @@ class DTMSQL(object):
                 assert isinstance(cond, (int, np.integer, np.float, float)), error_msg
 
     @staticmethod
-    def convert_rules_to_sql(rules: list):
+    def convert_rules_to_sql(rules: list, dbms: str, merge_ohe_features: dict = None):
         """
         This method converts the rules extracted from a BaseDecisionTree object into SQL case statements.
 
         :param rules: rules extracted from a BaseDecisionTree object
+        :param dbms: the name of the dbms
+        :param merge_ohe_features: (optional) ohe feature map to be merged in the decision rules
         :return: string containing the SQL query
         """
 
         DTMSQL._check_rule_format(rules)
+        if merge_ohe_features is not None:
+            DTMSQL._check_merge_ohe_features(merge_ohe_features)
+
+        dbms_util = DBMSUtils()
 
         sql_query = ""
         sql_string = " CASE WHEN "
@@ -173,14 +189,37 @@ class DTMSQL(object):
                 else:  # when op is equals to '=' or '<>' the thr is a string
                     thr = "'{}'".format(thr)
                 feature_name = item[3]
+
+                if merge_ohe_features is not None:
+                    # if ohe features have to be merged in the decision tree, the tree conditions are changed
+                    #   feature_after_ohe > 0.5 becomes original_cat_feature = val
+                    #   feature_after_ohe <= 0.5 becomes original_cat_feature <> val
+                    if feature_name in merge_ohe_features:  # only categorical features should pass this test
+                        mof = merge_ohe_features[feature_name]
+                        feature_name = mof['feature_before_ohe']
+                        old_op = op[:]
+                        op = '='
+                        if old_op == '<=':
+                            if 0 <= thr:
+                                op = '<>'
+                        elif old_op == '>':
+                            if 0 > thr:
+                                op = '<>'
+                        else:
+                            raise ValueError("Wrong op.")
+
+                        thr = "'{}'".format(mof['value'])
+
+                feature_name = dbms_util.get_delimited_col(dbms, feature_name)
                 sql_string += "{} {} {} and ".format(feature_name, op, thr)
-        if 'CASE' in sql_query: # ignore the case where a tree is composed of only a leaf
+
+        if 'CASE' in sql_query:     # ignore the case where a tree is composed of only a leaf
             sql_query += "END "
 
         return sql_query
 
     @staticmethod
-    def get_sql_flat_rules(tree: BaseDecisionTree, feature_names: list, is_classification: bool,
+    def get_sql_flat_rules(tree: BaseDecisionTree, feature_names: list, is_classification: bool, dbms: str,
                            merge_ohe_features: dict = None):
         """
         This method extracts the rules from a BaseDecisionTree object and convert them in SQL.
@@ -188,6 +227,7 @@ class DTMSQL(object):
         :param tree: BaseDecisionTree object
         :param feature_names: list of feature names
         :param is_classification: boolean flag that indicates whether the DTM is used in classification or regression
+        :param dbms: the name of the dbms
         :param merge_ohe_features: (optional) ohe feature map to be merged in the decision rules
         :return: string containing the SQL query
         """
@@ -196,12 +236,12 @@ class DTMSQL(object):
             DTMSQL._check_merge_ohe_features(merge_ohe_features)
 
         rules = DTMSQL.get_flat_rules(tree, feature_names, is_classification)
-        sql_query = DTMSQL.convert_rules_to_sql(rules)
+        sql_query = DTMSQL.convert_rules_to_sql(rules, dbms, merge_ohe_features)
 
         return sql_query
 
     @staticmethod
-    def get_sql_nested_rules(tree: BaseDecisionTree, feature_names: list, is_classification: bool,
+    def get_sql_nested_rules(tree: BaseDecisionTree, feature_names: list, is_classification: bool, dbms: str,
                              merge_ohe_features: dict = None):
         """
         This method extracts the rules from a BaseDecisionTree object and convert them in SQL.
@@ -209,6 +249,7 @@ class DTMSQL(object):
         :param tree: BaseDecisionTree object
         :param feature_names: list of feature names
         :param is_classification: boolean flag that indicates whether the DTM is used in classification or regression
+        :param dbms: the name of the dbms
         :param merge_ohe_features: (optional) ohe feature map to be merged in the decision rules
         :return: string containing the SQL query
         """
@@ -220,6 +261,8 @@ class DTMSQL(object):
         assert isinstance(is_classification, bool), "Only bool data type is allowed for param 'is_classification'."
         if merge_ohe_features is not None:
             DTMSQL._check_merge_ohe_features(merge_ohe_features)
+
+        dbms_util = DBMSUtils()
 
         # get for each node, left, right child nodes, thresholds and features
         left = tree.tree_.children_left  # left child for each node
@@ -254,7 +297,7 @@ class DTMSQL(object):
                     thr = "'{}'".format(mof['value'])
                     op = '<>'
 
-            sql_dtm_rule = f" CASE WHEN `{feature}` {op} {thr} THEN"
+            sql_dtm_rule = f" CASE WHEN {dbms_util.get_delimited_col(dbms, feature)} {op} {thr} THEN"
 
             # check if current node has a left child
             if left[node] != -1:
@@ -277,7 +320,7 @@ class DTMSQL(object):
         return sql_dtm_rules
 
     @staticmethod
-    def get_params(dtm: BaseDecisionTree, features: list, is_classification: bool, nested: bool,
+    def get_params(dtm: BaseDecisionTree, features: list, is_classification: bool, nested: bool, dbms: str,
                    merge_ohe_features: dict = None):
         """
         This method extracts the tree rules from the Sklearn's Decision Tree Model and creates their SQL representation.
@@ -286,6 +329,7 @@ class DTMSQL(object):
         :param features: the list of features
         :param is_classification: boolean flag that indicates whether the DTM is used in classification or regression
         :param nested: boolean flag that indicates whether to use the nested SQL conversion technique
+        :param dbms: the name of the dbms
         :param merge_ohe_features: (optional) ohe feature map to be merged in the decision rules
         :return: Python dictionary containing the parameters extracted from the fitted DTM
         """
@@ -301,10 +345,10 @@ class DTMSQL(object):
 
         # extract the decision rules from the Decision Tree Model
         if nested:
-            sql_rules = DTMSQL.get_sql_nested_rules(dtm, features, is_classification,
+            sql_rules = DTMSQL.get_sql_nested_rules(dtm, features, is_classification, dbms,
                                                     merge_ohe_features=merge_ohe_features)
         else:
-            sql_rules = DTMSQL.get_sql_flat_rules(dtm, features, is_classification,
+            sql_rules = DTMSQL.get_sql_flat_rules(dtm, features, is_classification, dbms,
                                                   merge_ohe_features=merge_ohe_features)
         tree_params = {"estimator": dtm, "sql_rules": sql_rules}
 
@@ -345,11 +389,14 @@ class DTMSQL(object):
             assert isinstance(f, str)
         assert isinstance(table_name, str), "Only string data type is allowed for param 'table_name'."
 
+        assert self.dbms is not None, "No dbms selected."
+
         # extract the parameters (i.e., the decision rules) from the fitted DTM
         dtm_params = DTMSQL.get_params(dtm, features, is_classification=self.classification, nested=self.nested,
-                                       merge_ohe_features=self.merge_ohe_features)
+                                       dbms=self.dbms, merge_ohe_features=self.merge_ohe_features)
 
         # create the SQL query that implements the DTM inference
+        pre_inference_query = None
         query = self._dtm_to_sql(dtm_params, table_name)
 
-        return query
+        return pre_inference_query, query

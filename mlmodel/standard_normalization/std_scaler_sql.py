@@ -1,6 +1,7 @@
 import numpy as np
 from sklearn.preprocessing import StandardScaler
 from collections import Iterable
+from utils.dbms_utils import DBMSUtils
 
 
 class StandardScalerSQL(object):
@@ -10,6 +11,15 @@ class StandardScalerSQL(object):
 
     def __init__(self):
         self.params = None
+        self.dbms = None
+        self.mode = None
+
+    def set_mode(self, mode: str):
+        assert isinstance(mode, str), "Wrong data type for param 'mode'."
+        self.mode = mode
+
+    def set_dbms(self, dbms: str):
+        self.dbms = dbms
 
     def get_params(self, scaler, norm_features, all_features, prev_transform_features=None, with_mean=False):
         """
@@ -110,17 +120,21 @@ class StandardScalerSQL(object):
         norm_features = self.params["norm_features"]
         other_features = self.params["other_features"]
 
+        dbms_util = DBMSUtils()
+
         # create the SQL query that implements the normalization in SQL
         query = "SELECT "
         # loop over the features to be normalized and create the portion of query that normalized each feature
         for i in range(len(norm_features)):
-            query += "(`{}`-{})/({}) AS `{}`,".format(norm_features[i], avgs[i], stds[i], norm_features[i])
+            f = dbms_util.get_delimited_col(self.dbms, norm_features[i])
+            query += "({}-{})/({}) AS {},".format(f, avgs[i], stds[i], f)
 
         # loop over the remaining features and insert them in the select clause
         for f in other_features:
+            f = dbms_util.get_delimited_col(self.dbms, f)
             query += "{},".format(f)
-        query = query[:-1] # remove the last ','
+        query = query[:-1]  # remove the last ','
 
         query += " FROM {}".format(table_name)
 
-        return query
+        return None, query
