@@ -12,6 +12,7 @@ from test.check_tree import check_path
 from test.confs import BikeConf, CreditCardConf, HeartConf, CriteoConf, FlightConf, IrisConf, TaxiConf
 from utils.ml_eval import evaluate_binary_classification_results, evaluate_multi_classification_results, \
     evaluate_regression_results
+from utils.dbms_utils import DBMSUtils
 
 
 PROJECT_DIR = os.path.abspath('..')
@@ -81,7 +82,7 @@ def check_data_config(conf: dict):
 
 
 def check_pipeline_config(pipeline_config: dict, available_features: list):
-    assert isinstance(pipeline_conf, dict)
+    assert isinstance(pipeline_config, dict)
     assert isinstance(available_features, list)
     assert len(available_features) > 0
 
@@ -113,8 +114,10 @@ def check_pipeline_config(pipeline_config: dict, available_features: list):
 def create_pipeline(pipeline_conf: dict):
     assert isinstance(pipeline_conf, dict)
 
+    transforms = sorted(pipeline_conf['transforms'], key=lambda x: x['name'], reverse=True)
+
     pipeline_transforms = []
-    for transform in pipeline_conf['transforms']:
+    for transform in transforms:
         pipeline_transforms.append(
             (transform['name'], transform['obj'], transform['features'])
         )
@@ -150,14 +153,17 @@ def extract_pipeline(pipeline):
     }
 
 
-def create_query(pipeline, mlmanager, features, input_table, optimizer, debug=False):
-    opt = Optimizer(pipeline, features, optimizer)
+def create_query(pipeline, mlmanager, features, input_table, optimizer, dbms, debug=False):
+    opt = Optimizer(pipeline, features, optimizer, dbms)
     pipeline = opt.optimize()
 
     # create an SQL query for each transformer
     sql_transformers = pipeline["transforms"]
+    preliminary_queries = []
     for sql_transformer in sql_transformers:
-        transformation_query = sql_transformer.query(input_table)
+        transf_pre_queries, transformation_query = sql_transformer.query(input_table)
+        if transf_pre_queries is not None:
+            preliminary_queries += transf_pre_queries
 
         # the input table for the possible next transformer is the output of the current transformer
         input_table = "({}) AS data".format(transformation_query)
@@ -177,9 +183,21 @@ def create_query(pipeline, mlmanager, features, input_table, optimizer, debug=Fa
         for attribute, value in model_sql_wrapper.__dict__.items():
             print("\t", attribute, '=', value)
 
-    query = model_sql_wrapper.query(fitted_model, features, input_table)
+    model_pre_queries, query = model_sql_wrapper.query(fitted_model, features, input_table)
 
-    return query
+    queries = preliminary_queries.copy()
+    out_query = ''
+    for pre_q in preliminary_queries:
+        out_query += f'{pre_q}\n'
+    if model_pre_queries is not None:
+        out_query += '\n'.join(model_pre_queries)
+        queries += model_pre_queries
+    out_query += query
+    queries.append(query)
+
+    print(out_query)
+
+    return queries, out_query
 
 
 def _check_fitted_pipeline(pipeline, model_name, X):
@@ -200,9 +218,8 @@ def _check_fitted_pipeline(pipeline, model_name, X):
         model.init_score = init_score
 
 
-def main(data_conf, pipeline_conf, task, debug=False):
-
-    data_conf['str_db_conn'] = 'mysql+pymysql://user:password@localhost/MASQdb'
+def main(data_conf, pipeline_conf, str_db_conn, task, optimizer, debug=False):
+    data_conf['str_db_conn'] = str_db_conn
     data_conf = check_data_config(data_conf)
     train = data_conf['train']
     y_train = data_conf['y_train']
@@ -249,13 +266,25 @@ def main(data_conf, pipeline_conf, task, debug=False):
     # SQL conversion
     print("\nStarting the SQL conversion...")
     pipeline = extract_pipeline(pipeline)
-    optimizer = True
-    query = create_query(pipeline, mlmanager, features, test_table_name, optimizer, debug)
+    dbms = DBMSUtils.get_dbms_from_str_connection(data_conf['str_db_conn'])
+    queries, all_query = create_query(pipeline, mlmanager, features, test_table_name, optimizer, dbms, debug)
     print("SQL Conversion completed.\n")
 
     # SQL predict
     print("\nStarting the SQL inference...")
-    sql_preds = pd.read_sql(query, conn)
+    for q in queries[:-1]:
+        try:
+            for qq in q.split(';'):
+                conn.execute(qq)
+        except Exception as e:
+            pass
+
+    try:
+        sql_preds = pd.read_sql(queries[-1], conn)
+    except Exception as e:
+        logging.error(e.args[0])
+        return
+
     sql_preds = pd.Series(sql_preds.iloc[:, 0])
     print(sql_preds[:10])
     null_val = False
@@ -312,40 +341,50 @@ def main(data_conf, pipeline_conf, task, debug=False):
 
 if __name__ == '__main__':
 
+    regressors = ['gbr', 'dtr', 'rfr', 'sgdr', 'linr']  # , 'sdcar', 'mlpr']
+    classifiers = ['gbc', 'dtc', 'rfc', 'logr']  # , 'mlpc']
+
+    # mysql
+    # str_db_conn = 'mysql+pymysql://user:password@localhost/MASQdb'
+    # sqlserver
+    str_db_conn = 'Driver={SQL Server}; Server=DESKTOP-UKRI92Q\SQLEXPRESS; Database=MASQdb; UID=sa; PWD=password;'
+
+    optimizer = True
+
     # BIKE
-    # conf = BikeConf()
-    # data_conf = conf.get_data_conf()
-    # pipeline_conf = conf.get_pipeline(['StandardScaler'], 'gbr')
+    conf = BikeConf()
+    data_conf = conf.get_data_conf()
+    pipeline_conf = conf.get_pipeline(['StandardScaler'], 'dtr')
 
     # CREDITCARD
     # conf = CreditCardConf()
     # data_conf = conf.get_data_conf()
-    # pipeline_conf = conf.get_pipeline(['StandardScaler'], 'gbc')
+    # pipeline_conf = conf.get_pipeline(['StandardScaler'], 'dtc')
 
     # CRITEO
     # conf = CriteoConf()
     # data_conf = conf.get_data_conf()
-    # pipeline_conf = conf.get_pipeline(['StandardScaler', 'OneHotEncoder'], 'dtc')
+    # pipeline_conf = conf.get_pipeline(['OneHotEncoder', 'StandardScaler'], 'dtc')
 
     # FLIGHT
     # conf = FlightConf()
     # data_conf = conf.get_data_conf()
-    # pipeline_conf = conf.get_pipeline(['StandardScaler', 'OneHotEncoder'], 'dtr')
+    # pipeline_conf = conf.get_pipeline(['OneHotEncoder', 'StandardScaler'], 'dtr')
 
     # HEART
     # conf = HeartConf()
     # data_conf = conf.get_data_conf()
-    # pipeline_conf = conf.get_pipeline(['StandardScaler'], 'gbc')
+    # pipeline_conf = conf.get_pipeline(['StandardScaler'], 'rfc')
 
     # IRIS
     # conf = IrisConf()
     # data_conf = conf.get_data_conf()
-    # pipeline_conf = conf.get_pipeline(['StandardScaler'], 'gbc')
+    # pipeline_conf = conf.get_pipeline(['StandardScaler'], 'rfc')
 
     # TAXI
-    conf = TaxiConf()
-    data_conf = conf.get_data_conf()
-    pipeline_conf = conf.get_pipeline(['StandardScaler', 'OneHotEncoder'], 'dtr')
+    # conf = TaxiConf()
+    # data_conf = conf.get_data_conf()
+    # pipeline_conf = conf.get_pipeline(['StandardScaler', 'OneHotEncoder'], 'dtr')
 
-    main(data_conf, pipeline_conf, conf.task, debug=False)
-
+    main(data_conf=data_conf, pipeline_conf=pipeline_conf, str_db_conn=str_db_conn, task=conf.task, optimizer=optimizer,
+         debug=False)
