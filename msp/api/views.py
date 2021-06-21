@@ -61,7 +61,7 @@ def get_document_object(filename):
 
 def get_dataframe(file):
     try:
-        ds = pd.read_csv(file, sep=',')
+        ds = pd.read_csv(file.path, sep=',')
     except (pd.errors.ParserError, ValueError):
         return None
 
@@ -543,7 +543,7 @@ def create_test_scenario(data):
     # Model params
     scenario.pipeline = get_document_object(data.get('pipeline'))
     scenario.run_db = data.get('run_db')
-    scenario.optimizer = data.get('optimizer')
+    scenario.optimizer = data.get('optimizer', False)
 
     return scenario
 
@@ -589,16 +589,29 @@ class ScenarioTestDetail(APIView):
                 'detail': str(e),
             }, status=status.HTTP_400_BAD_REQUEST)
 
+        # Load pipeline model from pipeline file
+        pipeline = load_model(scenario.pipeline.file)
+        if not pipeline:
+            return Response({'detail': 'The selected file isn\'t a pipeline objects'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # Extract pipeline information from loaded model
+        pipeline = MLManager.extract_pipeline_components(pipeline)
+        if not pipeline:
+            return Response({'detail': 'The selected file isn\'t a pipeline objects'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # Model params
+        scenario.model = pipeline.get('model')
+        scenario.transforms = json.dumps(pipeline.get('transforms', []))
+
         # Dataset
         if scenario.run_db:
-
             # Get features from table
             features = get_columns(scenario.db_url, scenario.table)
 
         else:
-
             data_extractor_start = datetime.now()
-
             # Get Dataset
             ds = get_dataset(scenario)
             features = ds.columns.to_list()
@@ -730,12 +743,16 @@ def check_simulation_consistency(scenario):
 
 def create_simulation_scenario(data):
     scenario = {
-        'is_db': data.get('is_db'),
+        'is_db': True,
         'db_url': data.get('db_url'),
         'table': data.get('table'),
+        'labels_type': data.get('labels_type'),
+        'labels': data.get('labels'),
         'pipeline': get_document_object(data.get('pipeline')),
         'batch_size': data.get('batch_size', 64),
-        'batch_number': data.get('batch_number', 1)}
+        'batch_number': data.get('batch_number', 1),
+        'optimizer': data.get('optimizer', False),
+    }
     return scenario
 
 
@@ -760,6 +777,11 @@ class ScenarioFastDetail(APIView):
         t_load_start = datetime.now()
         ds = get_table(scenario['db_url'], scenario['table'])
         features = ds.columns.to_list()
+
+        if scenario['labels_type'] == 'column':
+            # Remove Label column if exists
+            features.remove(scenario['labels'])
+
         t_load_end = datetime.now()
 
         # ML Manager
@@ -776,7 +798,7 @@ class ScenarioFastDetail(APIView):
 
             # Execute predict using MLManager and ML Library
             t_start = datetime.now()
-            _ = manager.predict(ds[features], scenario['pipeline'])
+            _ = manager.predict(ds[features], scenario['pipeline'].file)
             t_end = datetime.now()
 
             t_ml.append(t_end - t_start)
@@ -785,7 +807,7 @@ class ScenarioFastDetail(APIView):
             ds_batch.to_sql('batch', con=scenario["db_url"], if_exists="replace", index=False)
 
             # Generate query using MLManager
-            query = manager.generate_query(scenario['pipeline'], scenario['table'], features)
+            query = manager.generate_query(scenario['pipeline'].file, scenario['table'], features, scenario['optimizer'])
 
             # Execute query
             t_start = datetime.now()
