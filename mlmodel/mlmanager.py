@@ -170,16 +170,24 @@ class MLManager(object):
         }
 
     @staticmethod
-    def extract_pipeline_components(pipeline):
+    def extract_pipeline_components(pipeline, expand=False):
         model_name, _ = pipeline.steps[1]
         transforms = []
         for idx in range(len(pipeline.steps[0][1].transformers)):
             a, _, c = pipeline.steps[0][1].transformers_[idx]
 
-            for col in c:
+            if expand:
+                # Single transformer for each selected features
+                for col in c:
+                    transforms.append({
+                        'transform_type': a,
+                        'transform_column': col,
+                    })
+            else:
+                # One transformer type for a set of selected features
                 transforms.append({
                     'transform_type': a,
-                    'transform_column': col,
+                    'transform_column': c,
                 })
 
         return {
