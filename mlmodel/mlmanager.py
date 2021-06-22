@@ -50,12 +50,12 @@ class MLManager(object):
         'LogisticRegression': LogisticRegression(random_state=24),
         'SGDRegressor': SGDRegressor(),
         # 'SDCARegressor': SDCARegressor(),
-        'DecisionTreeClassifier': DecisionTreeClassifier(max_leaf_nodes=20, min_samples_leaf=10, random_state=24),
-        'DecisionTreeRegressor': DecisionTreeRegressor(max_depth=3, random_state=42),
-        'RandomForestClassifier': RandomForestClassifier(max_leaf_nodes=20, n_estimators=100, min_samples_leaf=10,
+        'DecisionTreeClassifier': DecisionTreeClassifier(max_depth=3, min_samples_leaf=10,
                                                          random_state=24),
-        'RandomForestRegressor': RandomForestRegressor(max_leaf_nodes=20, n_estimators=100, min_samples_leaf=10,
-                                                       random_state=24),
+        'DecisionTreeRegressor': DecisionTreeRegressor(max_depth=3, random_state=42),
+        'RandomForestClassifier': RandomForestClassifier(max_depth=20, n_estimators=4, random_state=24),
+        'RandomForestRegressor': RandomForestRegressor(max_depth=3, max_leaf_nodes=20, n_estimators=100,
+                                                       min_samples_leaf=10, random_state=24),
         'MLPClassifier': MLPClassifier(hidden_layer_sizes=(5, 5, 5)),
         'MLPRegressor': MLPRegressor(hidden_layer_sizes=(5, 5, 5)),
         'LinearRegression': LinearRegression(),
@@ -231,9 +231,6 @@ class MLManager(object):
         pipeline = self.extract_pipeline(model)
         input_table = dataset_name
 
-        if 'index' in features:         # FIXME
-            features.remove('index')
-
         opt = Optimizer(pipeline, features, optimization, dbms)
         pipeline = opt.optimize()
 
@@ -403,7 +400,15 @@ class Optimizer(object):
 
         if self.optimization:
             if self.dbms == 'sqlserver' and any([key in self.model_name for key in self.tree_based_model_keys]):
-                if fitted_model.max_depth > 10:     # FIXME: get actual tree depth
+                if 'estimators_' in dir(fitted_model):
+                    if isinstance(fitted_model.estimators_, np.ndarray):
+                        depth = np.max([tree.tree_.max_depth for estimator in fitted_model.estimators_ for tree in
+                                        estimator])
+                    else:
+                        depth = np.max([estimator.tree_.max_depth for estimator in fitted_model.estimators_])
+                else:
+                    depth = fitted_model.tree_.max_depth
+                if depth > 10:
                     model_sql_wrapper.set_flat_implementation()
 
         new_model = {
