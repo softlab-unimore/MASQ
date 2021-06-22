@@ -105,7 +105,7 @@ def get_column(url_connection, table_name, column_name):
     try:
         engine = create_engine(url_connection)
         with engine.connect() as connection:
-            res = connection.execute("select {} from {}".format(column_name, table_name))
+            res = connection.execute("select `{}` from {}".format(column_name, table_name))
             labels = [x[0] for x in res]
         return labels
     except SQLAlchemyError as e:
