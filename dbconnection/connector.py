@@ -3,6 +3,7 @@ import pandas as pd
 from sqlalchemy import create_engine, MetaData
 from sqlalchemy.exc import SQLAlchemyError
 import urllib
+from utils.dbms_utils import DBMSUtils
 
 
 def check_url_connection(url_connection):
@@ -102,10 +103,14 @@ def execute_multi_queries(url_connection, queries):
 
 def get_column(url_connection, table_name, column_name):
     url_connection = check_url_connection(url_connection)
+    dbms = 'mysql'
+    if 'mssql' in url_connection:
+        dbms = 'sqlserver'
     try:
         engine = create_engine(url_connection)
         with engine.connect() as connection:
-            res = connection.execute("select `{}` from {}".format(column_name, table_name))
+            res = connection.execute("select {} from {}".format(DBMSUtils.get_delimited_col(dbms, column_name),
+                                                                table_name))
             labels = [x[0] for x in res]
         return labels
     except SQLAlchemyError as e:
